@@ -14,7 +14,7 @@ type BasicPlayer = {
 	playerId: number,
 	frameIndex: number, -- 1 = live game. 2, 3, 4 ... = replay index
 }
-local targetPlayer
+local targetPlayer: BasicPlayer? = nil
 
 local nextPlayerKb = Input.Key.Right
 local nextPlayerGp = Input.Gamepad.DPad_Right
@@ -22,7 +22,6 @@ local previousPlayerKb = Input.Key.Left
 local previousPlayerGp = Input.Gamepad.DPad_Left
 local nearClippingPlane = 1
 
-local currentMode = 1 -- 1: POV 2: Auto Orbit 3: Manual Orbit
 local modeStrings = { "POV", "Auto Orbit", "Manual Orbit" }
 local threshold = 600 -- Above this threshhold Auto Orbit will look in the direction the player is moving. Below it will look where the player looks.
 local manualOrbitSmoothingMultiplier = 0.2
@@ -51,6 +50,22 @@ local nearClipOffset = -200
 
 local playerClickSensitivityDegrees = 5
 
+-- This is a helper function to initialize the config with default values
+local function initializeConfig(
+	defaultConfig: {
+		showNametags: boolean,
+		fieldOfView: number,
+		followMode: number, -- 1: POV 2: Auto Orbit 3: Manual Orbit
+		initialTargetPlayerName: string?,
+	}
+)
+	for i, v in pairs(defaultConfig) do
+		if config[i] == nil then
+			config[i] = v
+		end
+	end
+end
+
 function getAllPlayers()
 	local playerList = {}
 	local frames = getAllGameData()
@@ -63,8 +78,8 @@ function getAllPlayers()
 	return playerList
 end
 
-function getPlayer(basicPlayer: BasicPlayer): ReplayPlayer | nil
-	if (basicPlayer == nil) then
+function getPlayer(basicPlayer: BasicPlayer?): ReplayPlayer?
+	if basicPlayer == nil then
 		return nil
 	end
 	local frames = getAllGameData()
@@ -75,7 +90,10 @@ function getPlayer(basicPlayer: BasicPlayer): ReplayPlayer | nil
 	return nil
 end
 
-function getPlayerIndex(basicPlayer: BasicPlayer)
+function getPlayerIndex(basicPlayer: BasicPlayer?): number
+	if basicPlayer == nil then
+		return 1
+	end
 	local frames = getAllGameData()
 	if basicPlayer.frameIndex <= #frames then
 		local frame = frames[basicPlayer.frameIndex]
@@ -91,10 +109,10 @@ end
 function onGui()
 	local players = getAllPlayers()
 	Gui.text("Player Camera")
-	if Gui.beginCombo("Current Mode", modeStrings[currentMode]) then
+	if Gui.beginCombo("Current Mode", modeStrings[config.followMode]) then
 		for i = 1, #modeStrings do
-			if Gui.selectable(modeStrings[i], i == currentMode) then
-				currentMode = i
+			if Gui.selectable(modeStrings[i], i == config.followMode) then
+				config.followMode = i
 			end
 		end
 		Gui.endCombo()
@@ -102,11 +120,14 @@ function onGui()
 	Gui.newLine()
 	if Gui.collapsingHeader("Controls") then
 		Gui.indent()
-		Gui.text("Switch Between Players: Left and Right Arrow Keys or D-pad Left and Right\n\tOR left-click on a player to switch to them")
+		Gui.text(
+			"Switch Between Players: Left and Right Arrow Keys or D-pad Left and Right\n\tOR left-click on a player to switch to them"
+		)
 		Gui.text("Orbit:")
 		Gui.indent()
 		Gui.text("Right Click and drag or WASD or Gamepad Right Thumbstick")
 		Gui.text("Change Orbit Radius: Scroll Wheel or Arrow Keys Up and Down or Gamepad Left Stick Forward and Back")
+		Gui.text("Change FOV: Shift + Scroll Wheel")
 		Gui.text("Toggle between Manual and Auto orbit modes: Spacebar")
 		Gui.unindent()
 		Gui.unindent()
@@ -116,7 +137,9 @@ function onGui()
 	if Gui.collapsingHeader("Choose a player") then
 		Gui.indent()
 		if #players == 0 then
-			Gui.text("No players present! Try selecting a different place to read game data from at the top of this window")
+			Gui.text(
+				"No players present! Try selecting a different place to read game data from at the top of this window"
+			)
 		else
 			if Gui.button(Icon.CaretLeft) then
 				previousPlayer(players)
@@ -137,12 +160,19 @@ function onGui()
 
 			if Gui.beginListBox("Player List") then
 				for i = 1, #players do
-					Gui.pushId(i)
+					Gui.pushId(tostring(i))
 					local player = players[i]
 					local currentPlayer = getPlayer(player)
-					if currentPlayer and string.find(string.lower(currentPlayer.playerName), string.lower(playerNameSearch)) then
+					if
+						currentPlayer
+						and string.find(string.lower(currentPlayer.playerName), string.lower(playerNameSearch))
+					then
 						local isSelected = false
-						if player.playerId == targetPlayer.playerId and player.frameIndex == targetPlayer.frameIndex then
+						if
+							targetPlayer ~= nil
+							and player.playerId == targetPlayer.playerId
+							and player.frameIndex == targetPlayer.frameIndex
+						then
 							isSelected = true
 						end
 						if Gui.selectable(currentPlayer.playerName, isSelected) then
@@ -161,8 +191,8 @@ function onGui()
 
 	if Gui.collapsingHeader("Settings") then
 		Gui.indent()
-		camera.fieldOfView = Gui.sliderFloat("Field of View", camera.fieldOfView, 10, 170)
-		camera.showNameTags = Gui.checkbox("Show name tags", camera.showNameTags)
+		config.fieldOfView = Gui.sliderFloat("Field of View", config.fieldOfView, 10, 170)
+		config.showNameTags = Gui.checkbox("Show name tags", config.showNameTags)
 		clipEverythingBeforePlayer = Gui.checkbox("Clip Everything Before Player", clipEverythingBeforePlayer)
 		Gui.setItemTooltip("Useful for far away zoom shots!")
 		if clipEverythingBeforePlayer then
@@ -187,14 +217,17 @@ function onGui()
 			if not enableDynamicDof then
 				Gui.beginDisabled()
 			end
-			postProcessSettings.depthOfFieldFstop = Gui.sliderFloat("Depth of Field Fstop", postProcessSettings.depthOfFieldFstop, 0, 6)
+			postProcessSettings.depthOfFieldFstop =
+				Gui.sliderFloat("Depth of Field Fstop", postProcessSettings.depthOfFieldFstop, 0, 6)
 			postProcessSettings.depthOfFieldSensorWidth =
 				Gui.sliderFloat("Depth of Field Sensor Width", postProcessSettings.depthOfFieldSensorWidth, 0, 100)
 			if not enableDynamicDof then
 				Gui.endDisabled()
 			end
-			postProcessSettings.motionBlurAmount = Gui.sliderFloat("Motion Blur Amount", postProcessSettings.motionBlurAmount, 0, 1)
-			postProcessSettings.vignetteIntensity = Gui.sliderFloat("Vignette Intensity", postProcessSettings.vignetteIntensity, 0, 1)
+			postProcessSettings.motionBlurAmount =
+				Gui.sliderFloat("Motion Blur Amount", postProcessSettings.motionBlurAmount, 0, 1)
+			postProcessSettings.vignetteIntensity =
+				Gui.sliderFloat("Vignette Intensity", postProcessSettings.vignetteIntensity, 0, 1)
 			Gui.treePop()
 		end
 		if Gui.treeNode("Other Settings") then
@@ -203,18 +236,28 @@ function onGui()
 			mouseWheelSensitivity = Gui.sliderFloat("Mouse Wheel Sensitivity", mouseWheelSensitivity, 10, 100)
 			fovRotSpeedMultiplier = Gui.sliderFloat("FOV Rotation Speed Multiplier", fovRotSpeedMultiplier, 1, 3)
 			mouseSensitivity = Gui.sliderFloat("Mouse Sensitivity", mouseSensitivity, 0.5, 6)
-			manualOrbitSmoothingMultiplier = Gui.sliderFloat("Manual Orbit Smoothing Multiplier", manualOrbitSmoothingMultiplier, 0, 1)
+			manualOrbitSmoothingMultiplier =
+				Gui.sliderFloat("Manual Orbit Smoothing Multiplier", manualOrbitSmoothingMultiplier, 0, 1)
 			Gui.treePop()
 		end
 		Gui.unindent()
-		Gui.unindent()
 		Gui.newLine()
+	end
+
+	if Gui.button("Save Config") then
+		saveConfig()
 	end
 end
 
 function main()
-	camera.fieldOfView = 90
 	camera.positionSmoothing = 0
+
+	-- Add default values to any keys that don't exist in the config file
+	initializeConfig({
+		followMode = 1,
+		showNameTags = true,
+		fieldOfView = 90,
+	})
 end
 
 function onTransitionBegin()
@@ -248,7 +291,7 @@ function projectVectorOntoPlane(vec: Vec3, normal: Vec3)
 	return answer
 end
 
-function findPlayerInDirection(start: Vec3, direction: Vec3, players: { BasicPlayer }): BasicPlayer | nil
+function findPlayerInDirection(start: Vec3, direction: Vec3, players: { BasicPlayer }): BasicPlayer?
 	local closestPlayer = players[1]
 	local largestDotProduct = -1
 	local normalizedDirection = direction:getSafeNormal()
@@ -269,16 +312,22 @@ function findPlayerInDirection(start: Vec3, direction: Vec3, players: { BasicPla
 	end
 end
 
-function findClosestPlayer(pos: Vec3, players: { BasicPlayer }): BasicPlayer | nil
+function findClosestPlayer(pos: Vec3, players: { BasicPlayer }): BasicPlayer?
 	if #players < 1 then
 		return nil
 	end
 	local closestPlayer = players[1]
 	local closestPlayerObj = getPlayer(players[1])
+	if closestPlayerObj == nil then
+		return nil
+	end
 	local closestDistance = Vec3.distance(pos, closestPlayerObj.head.position)
 	for i = 1, #players do
 		local player = players[i]
 		local playerObj = getPlayer(player)
+		if playerObj == nil then
+			continue
+		end
 		local distance = Vec3.distance(pos, playerObj.head.position)
 		print(playerObj.playerName .. " distance: " .. distance)
 		if distance < closestDistance then
@@ -288,6 +337,17 @@ function findClosestPlayer(pos: Vec3, players: { BasicPlayer }): BasicPlayer | n
 	end
 
 	return closestPlayer
+end
+
+function findPlayerByName(name: string, players: { BasicPlayer }): BasicPlayer?
+	for i = 1, #players do
+		local player = players[i]
+		local playerObj = getPlayer(player)
+		if playerObj and playerObj.playerName == name then
+			return player
+		end
+	end
+	return nil
 end
 
 function tick(dt)
@@ -325,15 +385,20 @@ function tick(dt)
 	if Input.getKey(Input.Key.Up) then
 		distanceChangeInput -= kbMoveSensitivity
 	end
-	distanceChangeInput += Input.getAnalog(Input.Key.MouseWheelAxis) * -mouseWheelSensitivity
 	distanceChangeInput -= Input.getAnalog(Input.Gamepad.LeftY) * gpMoveSensitivity
+	if Input.getKey(Input.Key.LeftShift) or Input.getKey(Input.Key.RightShift) then
+		config.fieldOfView += Input.getAnalog(Input.Key.MouseWheelAxis) * -mouseWheelSensitivity * 0.1
+		config.fieldOfView = math.min(math.max(config.fieldOfView, 5), 170)
+	else
+		distanceChangeInput += Input.getAnalog(Input.Key.MouseWheelAxis) * -mouseWheelSensitivity
+	end
 
 	orbitRadius += distanceChangeInput
 	local mouse = Input.getMouseDelta()
 	local rightAnalog = Vec2.new(Input.getAnalog(Input.Gamepad.RightX), Input.getAnalog(Input.Gamepad.RightY))
 
 	if orbitRadius <= 0 then
-		currentMode = 1
+		config.followMode = 1
 		orbitRadius = 0
 	end
 
@@ -341,14 +406,14 @@ function tick(dt)
 		return
 	end
 
-	if currentMode == 1 then
+	if config.followMode == 1 then
 		-- POV
 		camera.hideNearestHead = true
 		camera.positionSmoothing = 0
 		camera.rotationSmoothing = 0
 
 		if distanceChangeInput > 0 then
-			currentMode = 2
+			config.followMode = 2
 			orbitRadius = 10
 		end
 
@@ -362,14 +427,14 @@ function tick(dt)
 
 		-- Toggle between Auto and Manual Orbit
 		if Input.getKeyDown(Input.Key.SpaceBar) then
-			if currentMode == 2 then
-				currentMode = 3
-			elseif currentMode == 3 then
-				currentMode = 2
+			if config.followMode == 2 then
+				config.followMode = 3
+			elseif config.followMode == 3 then
+				config.followMode = 2
 			end
 		end
 
-		if currentMode == 2 then
+		if config.followMode == 2 then
 			-- Automatic 3rd person view of player
 			local lookTarget = target.head.position + target.head.rotation:getForwardVector() * lookAheadDistance
 
@@ -391,7 +456,7 @@ function tick(dt)
 			end
 
 			if Input.getKey(Input.Key.RightMouseButton) or rightAnalog:length() > 0.1 then
-				currentMode = 3
+				config.followMode = 3
 			end
 
 			camera.position = rayEnd
@@ -437,7 +502,8 @@ function tick(dt)
 			end
 
 			cameraDirection = gravity.upRotation:rotateVector(
-				Quat.fromEuler(cameraDirectionEuler.x, cameraDirectionEuler.y, cameraDirectionEuler.z):getForwardVector()
+				Quat.fromEuler(cameraDirectionEuler.x, cameraDirectionEuler.y, cameraDirectionEuler.z)
+					:getForwardVector()
 			) * -1
 			camera.position = target.head.position + cameraDirection * orbitRadius
 			camera:lookAt(target.head.position, gravity.upDirection)
@@ -449,14 +515,17 @@ function tick(dt)
 		nearClippingPlane = distToTargetPlayer + nearClipOffset
 	end
 	camera.nearClippingPlane = nearClippingPlane
-	if enableDynamicDof and currentMode > 1 then -- Dynamic DOF is only for orbit mode since it focuses on the player
+	if enableDynamicDof and config.followMode > 1 then -- Dynamic DOF is only for orbit mode since it focuses on the player
 		postProcessSettings.depthOfFieldFocalDistance = distToTargetPlayer - 12 -- 12cm is approx the radius of the head
 	else
 		postProcessSettings.depthOfFieldFocalDistance = 0
 	end
+
+	camera.fieldOfView = config.fieldOfView
+	camera.showNameTags = config.showNameTags
 end
 
 function onMessageReceived(followMode: number, player: BasicPlayer)
-	currentMode = followMode
+	config.followMode = followMode
 	targetPlayer = player
 end

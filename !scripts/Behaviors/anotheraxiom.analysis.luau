@@ -17,6 +17,10 @@ local drawConnectingLines = false
 local lineThickness = 4
 local pointSize = 6
 local lastFrame: ReplayFrame = nil
+local resolution = 5
+
+local targetPlayer: string = ""
+local range = Vec2.new(0, 0)
 
 local function randomColor(seed: number): { number }
 	math.randomseed(seed)
@@ -66,9 +70,8 @@ local function drawPointCloud()
 	local replays = Replay.listLoaded()
 	for i = 1, #replays do
 		local replay = Replay.getByIndex(i)
-		local resolution = 5 -- how many times per frame to sample
-		for i = 1, replay:getDurationSeconds() * resolution do
-			local frame = replay:getFrameAtTimeSeconds((i - 1) / resolution, true)
+		for i = 1, (range.y - range.x) * resolution do
+			local frame = replay:getFrameAtTimeSeconds((i - 1) / resolution + range.x, true)
 			for j = 1, #frame.players do
 				local player = frame.players[j]
 				local c = colorFromSpeed(player.velocity:length())
@@ -90,12 +93,14 @@ local function drawAllLines()
 			warn("Replay is nil. " .. i .. " of " .. #replays)
 			return
 		end
-		local resolution = 1 -- how many times per frame to sample
 		local lastFrame: ReplayFrame = nil
-		for i = 1, replay:getDurationSeconds() * resolution do
-			local frame = replay:getFrameAtTimeSeconds((i - 1) / resolution, true)
+		for i = 1, (range.y - range.x) * resolution do
+			local frame = replay:getFrameAtTimeSeconds((i - 1) / resolution + range.x, true)
 			for j = 1, #frame.players do
 				local player = frame.players[j]
+				if targetPlayer ~= "" and player.playerName ~= targetPlayer then
+					continue
+				end
 				local lastPlayer: ReplayPlayer = nil
 				if lastFrame then
 					lastPlayer = lastFrame:getPlayerById(player.playerId)
@@ -120,14 +125,19 @@ end
 function onGui()
 	Gui.text("" .. #Replay.listLoaded() .. " replays loaded\nLoad replays with the Replays window.")
 	Gui.spacing()
+	targetPlayer = Gui.inputText("Target Player", targetPlayer)
+	Gui.setItemTooltip("Only show this player. Leave blank for all players")
+	resolution = Gui.sliderFloat("Samples per second", resolution, 0.1, 10)
 	if Gui.button("Draw point cloud") then
 		drawPointCloud()
 	end
+	Gui.sameLine()
 	pointSize = Gui.sliderFloat("Point Size", pointSize, 1, 50)
 	Gui.spacing()
 	if Gui.button("Draw Paths") then
 		drawAllLines()
 	end
+	Gui.sameLine()
 	lineThickness = Gui.sliderFloat("Line Thickness", lineThickness, 1, 50)
 	Gui.spacing()
 	local newDrawTrails = Gui.checkbox("Draw Trails", drawTrails)
@@ -144,6 +154,24 @@ function onGui()
 			World.clear()
 		end
 	end
+
+	local replay = Replay.getByIndex(1)
+	if replay ~= nil then
+		if range.x == 0 and range.y == 0 then
+			range = Vec2.new(0, replay:getDurationSeconds())
+		end
+		Gui.text("Replay range: ")
+		Gui.text(`Start: {range.x}`)
+		Gui.text(`End: {range.y}`)
+		local nextRange = Gui.rangeSlider("timelineRange", range, 0, replay:getDurationSeconds())
+		if nextRange.x ~= range.x then
+			replay:setPlaybackTimeSeconds(nextRange.x)
+		end
+		if nextRange.y ~= range.y then
+			replay:setPlaybackTimeSeconds(nextRange.y)
+		end
+		range = Vec2.new(nextRange.x, nextRange.y)
+	end
 end
 
 function tick(dt)
@@ -153,6 +181,9 @@ function tick(dt)
 			local frame = replay:getCurrentFrame(false)
 			for i = 1, #frame.players do
 				local player = frame.players[i]
+				if targetPlayer ~= "" and player.playerName ~= targetPlayer then
+					continue
+				end
 				local lastPlayer: ReplayPlayer = nil
 				if lastFrame then
 					lastPlayer = lastFrame:getPlayerById(player.playerId)
