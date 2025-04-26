@@ -267,3 +267,13 @@ declare DateTime: {
 
 --- The config table from the configuation .json file
 declare config: any
+
+
+declare Network: {
+	--- The name of the current server we are connected to. Returns nil if not connected to a server.
+	getCurrentServer: () -> string | nil,
+	--- Connects to a server at the given IP and port. e.g. `127.0.0.1:7777`. Returns true on success, false otherwise.
+	connectToServer: (ipAndPort: string) -> boolean,
+	--- Disconnects from the current server if connected. Returns true on success, false otherwise.
+	disconnectFromServer: () -> boolean
+}

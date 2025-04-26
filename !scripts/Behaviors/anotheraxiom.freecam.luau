@@ -16,8 +16,11 @@ local leftKey = Input.Key.A
 local rightKey = Input.Key.D
 local upKey = Input.Key.E
 local downKey = Input.Key.Q
---- This moves the camera up and down along the gravity vector instead of local up
-local verticalMovementModifier = Input.Key.LeftAlt
+--- This moves the camera up and down along the gravity vector instead of local up. It also makes W and S work in the plane defined by the gravity
+local gravityAlignedMovementModifier = Input.Key.LeftAlt
+local localMovementAxesDefault = true
+
+local snapToGravityKey = Input.Key.SpaceBar
 
 local pitchUpKey = Input.Key.Up
 local pitchDownKey = Input.Key.Down
@@ -47,8 +50,8 @@ local rotSpeed = 180
 local fovRotSpeedMultiplier = 2
 
 local moveSpeed = config.moveSpeed or 1600
-local maxMoveSpeed = 10000
-local minMoveSpeed = 500
+local maxMoveSpeed = 25000
+local minMoveSpeed = 200
 --- How fast the speed adjustment buttons affect the camera speed
 local speedAdjustmentRate = 1
 local mouseSensitivity = config.mouseSensitivity or 3.6
@@ -95,6 +98,7 @@ end
 
 function onGui()
 	if Gui.collapsingHeader("Debug") then
+		Gui.indent()
 		camera.hideNearestHead = Gui.checkbox("Hide nearest head", camera.hideNearestHead)
 
 		local newGoalExplosions = Gui.checkbox("Goal explosions", playGoalExplosions)
@@ -120,6 +124,7 @@ function onGui()
 			ballScaleMultiplier = newBallScaleMultiplier
 			spectatorDebug.replayBallScaleMultiplier = ballScaleMultiplier
 		end
+		Gui.unindent()
 	end
 
 	if Gui.collapsingHeader("Controls") then
@@ -135,11 +140,13 @@ function onGui()
 		Gui.indent()
 		Gui.text("Pan: Mouse or Right Gamepad Stick")
 		Gui.text("Roll: Right Click and Drag or D-Pad Left and Right")
+		Gui.text("Align to Current Gravity: Spacebar")
 		Gui.unindent()
 		Gui.text("Other")
 		Gui.indent()
 		Gui.text("Toggle Smoothing: Caps Lock")
 		Gui.text("Zoom: Scroll Wheel or D-Pad Up and Down")
+		Gui.text("Focus: Middle mouse click")
 		Gui.unindent()
 		Gui.unindent()
 	end
@@ -150,7 +157,8 @@ function onGui()
 
 	speedAdjustmentRate = Gui.sliderFloat("Speed Adjustment Rate", speedAdjustmentRate, 0, 5)
 	Gui.setItemTooltip("How fast the speed adjustment buttons affect the camera speed")
-	alignToGravity = Gui.checkbox("Align to Gravity", alignToGravity)
+	alignToGravity = Gui.checkbox("Automatically Align to Gravity", alignToGravity)
+	localMovementAxesDefault = Gui.checkbox("Use Local Movement Axes (Hold alt to use other set of axes)", localMovementAxesDefault)
 
 	Gui.separatorText("Manual Controls")
 	camera.position = Gui.dragFloat3("Position", camera.position, 10, -100000, 100000)
@@ -163,7 +171,10 @@ function onGui()
 	camera.fieldOfView = Gui.sliderFloat("Field of View", camera.fieldOfView, minFov, maxFov)
 
 	camera.showNameTags = Gui.checkbox("Show name tags", camera.showNameTags)
+	Gui.newLine()
+
 	if Gui.collapsingHeader("Smoothing##smoothingSettingsHeader") then
+		Gui.indent()
 		local newSmoothing = Gui.checkbox("Smoothing##smoothingCheckbox", smoothing)
 		if newSmoothing ~= smoothing then
 			smoothing = newSmoothing
@@ -173,10 +184,12 @@ function onGui()
 		camera.positionSmoothing = Gui.sliderFloat("Position Smoothing", camera.positionSmoothing, 0, 1)
 		camera.rotationSmoothing = Gui.sliderFloat("Rotation Smoothing", camera.rotationSmoothing, 0, 1)
 		camera.fieldOfViewSmoothing = Gui.sliderFloat("Field of View Smoothing", camera.fieldOfViewSmoothing, 0, 1)
+		Gui.unindent()
 	end
 
 	-- Post Processing Effects:
 	if Gui.collapsingHeader("Post Processing Settings") then
+		Gui.indent()
 		camera.nearClippingPlane = Gui.sliderFloat("Near Clipping Plane", camera.nearClippingPlane, 1, 100)
 
 		if Gui.button("Auto Focus") then
@@ -184,6 +197,7 @@ function onGui()
 		end
 		Gui.sameLine()
 		continuousAutoFocus = Gui.checkbox("Continuous Auto Focus", continuousAutoFocus)
+		Gui.unindent()
 	end
 end
 
@@ -192,17 +206,12 @@ function tick(dt)
 		autoFocusCenter()
 	end
 
-	if Input.getKey(Input.Key.LeftAlt) and Input.getKey(Input.Key.LeftMouseButton) then
-		local hit = camera:castRayFromMouse()
-		if hit.successful then
-			local distanceToHit = Vec3.distance(camera.position, hit.position)
-			postProcessSettings.depthOfFieldFocalDistance = distanceToHit
-		end
-	end
-
 	local forward = camera.rotation:getForwardVector()
+	local currentGravityDirection = gravityChaser:getUpVector()
+	local gravityForward = projectVectorOntoPlane(forward, currentGravityDirection):getSafeNormal()
 	local right = camera.rotation:getRightVector()
 	local up = camera.rotation:getUpVector()
+	local useLocalMovementAxes = xor(localMovementAxesDefault, Input.getKey(gravityAlignedMovementModifier))
 
 	-- Speed
 	if Input.getKey(fastKey) or Input.getKey(Input.Gamepad.RightShoulder) then
@@ -210,9 +219,11 @@ function tick(dt)
 		if moveSpeed < minMoveSpeed then
 			moveSpeed = minMoveSpeed
 		end
+		if moveSpeed > maxMoveSpeed then
+			moveSpeed = maxMoveSpeed
+		end
 	elseif Input.getKey(slowKey) or Input.getKey(Input.Gamepad.LeftShoulder) then
 		moveSpeed *= (1 - speedAdjustmentRate * dt)
-
 		if moveSpeed > maxMoveSpeed then
 			moveSpeed = maxMoveSpeed
 		end
@@ -240,10 +251,18 @@ function tick(dt)
 	local input = Vec3.zeroVector
 	-- Keyboard
 	if Input.getKey(forwardKey) then
-		input += forward
+		if useLocalMovementAxes then
+			input += forward
+		else
+			input += gravityForward
+		end
 	end
 	if Input.getKey(backwardKey) then
-		input -= forward
+		if useLocalMovementAxes then
+			input -= forward
+		else
+			input -= gravityForward
+		end
 	end
 	if Input.getKey(rightKey) then
 		input += right
@@ -252,17 +271,17 @@ function tick(dt)
 		input -= right
 	end
 	if Input.getKey(upKey) then
-		if Input.getKey(verticalMovementModifier) then
-			input += gravity.upDirection
-		else
+		if useLocalMovementAxes then
 			input += up
+		else
+			input += currentGravityDirection
 		end
 	end
 	if Input.getKey(downKey) then
-		if Input.getKey(verticalMovementModifier) then
-			input -= gravity.upDirection
-		else
+		if useLocalMovementAxes then
 			input -= up
+		else
+			input -= currentGravityDirection
 		end
 	end
 
@@ -340,6 +359,10 @@ function tick(dt)
 			gravityChaser = nextGravityChaser
 		end
 	end
+	if Input.getKeyDown(snapToGravityKey) then
+		gravityChaser = gravity.upRotation
+		rotEuler.x = 0
+	end
 
 	rotEuler += nextLookDiff
 	lookInputTarget -= nextLookDiff
@@ -354,8 +377,8 @@ function tick(dt)
 
 	-- Reset roll if close to 0
 	if Input.getKeyUp(rollMouseEnable) or Input.getKeyUp(rollRightGp) or Input.getKeyUp(rollLeftGp) then
-		local clampedRoll = rotEuler.x % 360
-		if math.abs(clampedRoll) <= rollResetTolerance then
+		local clampedRoll = math.abs(rotEuler.x) % 360
+		if clampedRoll <= rollResetTolerance then
 			rotEuler.x = 0
 			lookInputTarget.x = 0
 		end
@@ -399,4 +422,16 @@ function autoFocusCenter()
 		local distanceToHit = Vec3.distance(camera.position, hit.position)
 		postProcessSettings.depthOfFieldFocalDistance = distanceToHit
 	end
+end
+
+function projectVectorOntoPlane(vec: Vec3, normal: Vec3)
+	local normalizedNormal = normal:getSafeNormal()
+	local dot1 = vec:dot(normalizedNormal)
+	local proj = normalizedNormal * dot1
+	local answer = vec - proj
+	return answer
+end
+
+function xor(a, b)
+	return (a and not b) or (not a and b)
 end
