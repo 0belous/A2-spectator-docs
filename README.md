@@ -1,6 +1,7 @@
 # Orion drift spectator
 
 ## What this is:
+- Documentation and scripts used by the A2 spectator
 - Data extracted from the game files
 - Data that everyone, who has orion drift downloaded, has access to
 - Data everyone has access to, simply published in a format that makes it easy to view without the extraction proccess
