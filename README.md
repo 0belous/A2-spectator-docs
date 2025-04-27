@@ -10,8 +10,7 @@
 - An insider leak containing private data
 - Data the public does **not** have access to already
 - The actual Orion Drift spectator binaries
-
-### I am not affiliated with anyone spam DMing this repository to others
+- Scripts you can use or run in the quest version of the game
 
 <hr>
 
