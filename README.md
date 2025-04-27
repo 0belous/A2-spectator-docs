@@ -2,7 +2,7 @@
 
 ## What this is:
 - Data extracted from the game files
-- Data who everyone, who has orion drift downloaded, has access to
+- Data that everyone, who has orion drift downloaded, has access to
 - Data everyone has access to, simply published in a format that makes it easy to view without the extraction proccess
 - A demonstration of poor security on the part of Another Axiom
 
